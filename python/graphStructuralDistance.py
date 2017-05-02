@@ -7,9 +7,37 @@ from collections import defaultdict
 import itertools
 import datetime
 from random import randint
+import random
 from simanneal import Annealer
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+
+def strategy_random_sequential(G, colors):
+	"""Random sequential (RS) ordering. Scrambles nodes into random ordering."""
+	[n, m] = G.shape
+	nodes=list(range(0, n))
+	random.shuffle(nodes)
+	return nodes
+
+def greedy_color(G, strategy):
+	colors = {}  # dictionary to keep track of the colors of the nodes
+	[n, m] = G.shape
+	if n:
+		nodes = strategy(G, colors)
+		if nodes:
+			for node in nodes:
+				# set to keep track of colors of neighbors
+				neighbor_colors = set()
+				neis = np.nonzero(G[node,])
+				for neighbor in neis[0].tolist():
+					if neighbor in colors:
+						neighbor_colors.add(colors[neighbor])
+					for color in itertools.count():
+						if color not in neighbor_colors:
+							break
+					# assign the node the newly found color
+					colors[node] = color
+	return colors
 
 def gdist(ori_arr, anon_arr):
 		gdist = 0
@@ -38,6 +66,7 @@ def gddelta(A1, A2, a, b):
 class StructDist(Annealer):
 	def __init__(self, state, A1, A2, d0):
 		self.A1 = A1
+		self.A1_colors = greedy_color(A1, strategy_random_sequential)
 		self.A2 = A2
 		self.A3 = A1.copy()
 		self.A4 = A2.copy()
@@ -51,25 +80,24 @@ class StructDist(Annealer):
 
 	def move(self):
 		"""Swaps two cities in the route."""
-		temp_r1 = randint(0, self.n_ori-1)
-		temp_r2 = randint(0, self.n_anon-1)
-		count = 0
-		while (temp_r1, temp_r2) in self.seen:
-			count = count + 1
-			temp_r1 = randint(0, self.n_ori-1)
-			temp_r2 = randint(0, self.n_anon-1)
-			if count > self.n_ori:
-				break
-		
-		self.r1 = temp_r1
-		self.r2 = temp_r2
-
-		self.seen.add((temp_r1, temp_r2))
-
-		temp_A3 = self.A1.copy()
-		temp_A4 = self.A2.copy()
-
-		temp_A4[:,[temp_r1, temp_r2]] = temp_A4[:,[temp_r2, temp_r1]]
+		temp_A4 = A2.copy()
+		until = False
+		nodelist = list(range(0,n_ori))
+		combos = list(itertools.combinations(nodelist,2))
+		l2 = A1_colors.values()
+		while not until:
+			nodelist = list(range(0,n_ori))
+			combos = list(itertools.combinations(nodelist,2))
+			while combos:
+				temp_r1, temp_r2 = combos.pop()
+				temp_A4[:,[temp_r1, temp_r2]] = temp_A4[:,[temp_r2, temp_r1]]
+				colors = greedy_color(temp_A4, strategy_random_sequential)
+				l1 = colors.values()
+				print l1
+				until = (l1 == l2)
+				if until:
+					break
+			
 		self.A3, self.A4 = temp_A3, temp_A4
 
 	def energy(self):
