@@ -1,30 +1,24 @@
 from __future__ import division
-import pandas as pd
 import logging, sys
 from igraph import *
 import numpy as np
-import time
-import matplotlib.pyplot as plt
-import matplotlib.mlab as mlab
 import math
-from scipy.stats.stats import pearsonr
-from joblib import Parallel, delayed
-from scipy.optimize import basinhopping
 from collections import defaultdict
 import itertools
 import datetime
 from random import randint
+from simanneal import Annealer
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO)
 
 def gdist(ori_arr, anon_arr):
-	gdist = 0
+		gdist = 0
 
-	logging.info("Computing graph distance...")
-	#sum(sum(map(lambda i: map(lambda x, y: np.absolute(x - y), ori_arr[i], anon_arr[i]), xrange(len(ori_arr))),[]))
-	gdist = sum(sum(np.absolute(ori_arr - anon_arr)))
+		#logging.info("Computing graph distance...")
+		#sum(sum(map(lambda i: map(lambda x, y: np.absolute(x - y), ori_arr[i], anon_arr[i]), xrange(len(ori_arr))),[]))
+		gdist = sum(sum(np.absolute(ori_arr - anon_arr)))
 
-	return gdist
+		return gdist
 
 def gddelta(A1, A2, a, b):
 	gddelta = 0
@@ -41,44 +35,60 @@ def gddelta(A1, A2, a, b):
 	
 	return gddelta
 
-seen = set()
+class StructDist(Annealer):
+	def __init__(self, state, A1, A2, d0):
+		self.A1 = A1
+		self.A2 = A2
+		self.A3 = A1.copy()
+		self.A4 = A2.copy()
+		self.n_ori, self.m_ori = A1.shape
+		self.n_anon, self.m_anon = A2.shape
+		self.r1 = 0
+		self.r2 = 0
+		self.d0 = d0
+		self.seen = set()
+		super(StructDist, self).__init__(state)  # important! 
 
-def sdist(db, A1, A2, d0):
-	[n_ori, m_ori] = A1.shape
-	[n_anon, m_anon] = A2.shape
-	
-	r1 = randint(0, n_ori-1)
-	r2 = randint(0, n_anon-1)
-	count = 0
-	while (r1, r2) in seen:
-		count = count + 1
-		r1 = randint(0, n_ori-1)
-		r2 = randint(0, n_anon-1)
-		if count > n_ori:
-			return d0
+	def move(self):
+		"""Swaps two cities in the route."""
+		temp_r1 = randint(0, self.n_ori-1)
+		temp_r2 = randint(0, self.n_anon-1)
+		count = 0
+		while (temp_r1, temp_r2) in self.seen:
+			count = count + 1
+			temp_r1 = randint(0, self.n_ori-1)
+			temp_r2 = randint(0, self.n_anon-1)
+			if count > self.n_ori:
+				break
+		
+		self.r1 = temp_r1
+		self.r2 = temp_r2
 
-	seen.add((r1, r2))
+		self.seen.add((temp_r1, temp_r2))
 
-	#ddelta = gddelta(A1, A2, r1, r2)
-	A3 = A1.copy()
-	A4 = A2.copy()
+		temp_A3 = self.A1.copy()
+		temp_A4 = self.A2.copy()
 
-	A4[:,[r1, r2]] = A4[:,[r2, r1]]
+		temp_A4[:,[temp_r1, temp_r2]] = temp_A4[:,[temp_r2, temp_r1]]
+		self.A3, self.A4 = temp_A3, temp_A4
 
-	logging.info("d0 is %s" % d0)
-	d1 = gdist(A3, A4)
-	logging.info("d1 is %s" % d1)
-	
-	if d1 < d0:
-		db = d1
-	else:
-		db = d0
+	def energy(self):
+		"""Calculates the length of the route."""
+		#logging.info("d0 is %s" % self.d0)
+		d1 = self.d0 + gddelta(self.A3, self.A4, self.r1, self.r2)
+		#logging.info("d1 is %s" % d1)
+		
+		if d1 < self.d0:
+			db = d1
+		else:
+			db = self.d0
 
-	#nc = sc.special.binom(list(range(1, 64)), 2)
-	#nc = map(int,nc)
+		#nc = sc.special.binom(list(range(1, 64)), 2)
+		#nc = map(int,nc)
 
-	logging.info("db is %s" % db)
-	return db
+		#logging.info("db is %s" % db)
+		
+		return db
 
 def main():
 	print "SDIST: Let us calculate the GDIST of the graph"
@@ -118,12 +128,18 @@ def main():
 	A2 = np.pad(anon_arr, pad_width=npad, mode='constant', constant_values=0)
 	logging.info("Resized both matrices to same shape")
 
-	x0 = list()
-	h_distance = gdist(A1, A2)
-	x0.append(h_distance*2)
-	minimizer_kwargs = {"method": "COBYLA", "args": (A1, A2, h_distance)}
-	ret = basinhopping(sdist, x0, minimizer_kwargs=minimizer_kwargs, niter=500, niter_success=n_ori**2)
-	
-	print ret
+	init_state = A2.copy()
 
+	tsp = StructDist(init_state, A1, A2, gdist(A1, A2))
+	#auto_schedule = tsp.auto(minutes=0.1)
+	# since our state is just a list, slice is the fastest way to copy
+	tsp.copy_strategy = "slice"
+	#tsp.set_schedule(auto_schedule)
+	tsp.Tmax = 98.6  # Max (starting) temperature
+	tsp.Tmin = 0.1      # Min (ending) temperature
+	tsp.steps = 1000000   # Number of iterations
+	tsp.updates = 10   # Number of updates (by default an update prints to stdout)
+	state, e = tsp.anneal()
+
+	print e
 main()
